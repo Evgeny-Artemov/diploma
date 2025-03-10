@@ -3,8 +3,6 @@
 #include <vector>
 #include <cmath>
 #include <boost/numeric/odeint.hpp>
-#include <functional>
-#include <iomanip>
 
 using namespace std;
 using namespace boost::numeric::odeint;
@@ -21,7 +19,6 @@ void observer(const state_type &x, const double t) {
     cout << "t = " << t << ", Cопряженные к скорости = "<< x[10] << ", " << x[11] << ", " << x[12] << ")" << endl;
     cout << "t = " << t << ", Cопряженная к массе = " << x[13] << endl;
 }
-
 
 double random_double() {
     static std::random_device rd;  
@@ -50,7 +47,7 @@ int main() {
     
     // Инициализируем сопряженные переменные
     for (int i = 7; i < 14; i++) {
-        x[i] = random_double();
+        x[i] = 0;
     }
     
     // Выводим описание вектора состояния
@@ -87,18 +84,22 @@ int main() {
         // Управление тягой (бинарное: 0 или 1), определяется по принципу максимума
         double delta = 0.0;  // Изначально отключено (нет тяги)
         
+        // Вычисляем текущую массу
+        double current_mass = M0 - x[6];
+        if (current_mass < 1e-10) current_mass = 1e-10;  // Избегаем деления на ноль
+
         // Вычисляем направление тяги (единичный вектор)
         double lambda_v_norm = sqrt(x[10]*x[10] + x[11]*x[11] + x[12]*x[12]);
         
         // Единичный вектор направления тяги (если lambda_v_norm не ноль)
         double p0_x = 0.0, p0_y = 0.0, p0_z = 0.0;
         if (lambda_v_norm > 1e-10) {
-            p0_x = -x[10] / lambda_v_norm;
-            p0_y = -x[11] / lambda_v_norm;
-            p0_z = -x[12] / lambda_v_norm;
+            p0_x = x[10] / lambda_v_norm;
+            p0_y = x[11] / lambda_v_norm;
+            p0_z = x[12] / lambda_v_norm;
             
             // Применяем принцип максимума: если функция переключения < 0, тяга включена
-            double switching_function = 1.0 - (P * lambda_v_norm) / (W * x[13]);
+            double switching_function = lambda_v_norm / current_mass - (x[13] - 1) / W;
             delta = (switching_function < 0) ? 1.0 : 0.0;
         }
         // Вычисляем величину радиус-вектора
@@ -108,10 +109,6 @@ int main() {
         // Избегаем деления на ноль
         if (r_magnitude_cubed < 1e-10) r_magnitude_cubed = 1e-10;
         
-        // Вычисляем текущую массу
-        double current_mass = M0 - x[6];
-        if (current_mass < 1e-10) current_mass = 1e-10;  // Избегаем деления на ноль
-        
         // Дифференциальные уравнения для переменных состояния
         
         // dr/dt = V
@@ -119,27 +116,27 @@ int main() {
         dxdt[1] = x[4];  // dy/dt = VY
         dxdt[2] = x[5];  // dz/dt = VZ
         
-        // dV/dt = -mu * r/|r|^3 + delta * W * p0
-        dxdt[3] = -mu * x[0] / r_magnitude_cubed + delta * W * p0_x;
-        dxdt[4] = -mu * x[1] / r_magnitude_cubed + delta * W * p0_y;
-        dxdt[5] = -mu * x[2] / r_magnitude_cubed + delta * W * p0_z;
+        // dV/dt = -mu * r/|r|^3 + delta * P * p0 / current_mass
+        dxdt[3] = -mu * x[0] / r_magnitude_cubed + delta * P * p0_x / current_mass;
+        dxdt[4] = -mu * x[1] / r_magnitude_cubed + delta * P * p0_y / current_mass;
+        dxdt[5] = -mu * x[2] / r_magnitude_cubed + delta * P * p0_z / current_mass;
         
         // dm/dt = -delta * W / P (расход топлива)
-        dxdt[6] = -delta * W / P;
+        dxdt[6] = -delta * P / W;
         
         // Уравнения для сопряженных переменных (выведены из принципа максимума Понтрягина)
         
         // d(lambda_r)/dt
-        dxdt[7] = mu * x[10] * (3*x[0]*x[0]/(r_magnitude_cubed*r_magnitude*r_magnitude) - 1.0/r_magnitude_cubed);
-        dxdt[8] = mu * x[11] * (3*x[1]*x[1]/(r_magnitude_cubed*r_magnitude*r_magnitude) - 1.0/r_magnitude_cubed);
-        dxdt[9] = mu * x[12] * (3*x[2]*x[2]/(r_magnitude_cubed*r_magnitude*r_magnitude) - 1.0/r_magnitude_cubed);
+        dxdt[7] =  (-3*x[0]*x[0] * mu * x[10])/(r_magnitude_cubed*r_magnitude*r_magnitude) + (mu * x[10]) / r_magnitude_cubed;
+        dxdt[8] =  (-3*x[1]*x[1] * mu * x[11])/(r_magnitude_cubed*r_magnitude*r_magnitude) + (mu * x[11]) / r_magnitude_cubed;
+        dxdt[9] =  (-3*x[2]*x[2] * mu * x[12])/(r_magnitude_cubed*r_magnitude*r_magnitude) + (mu * x[12]) / r_magnitude_cubed;
         
         // d(lambda_V)/dt = -lambda_r
         dxdt[10] = -x[7];
         dxdt[11] = -x[8];
         dxdt[12] = -x[9];
         
-        dxdt[13] = delta * P / (current_mass * current_mass) * lambda_v_norm;
+        dxdt[13] = - delta * P / (current_mass * current_mass) * lambda_v_norm;
     };
 
     // Создаем контролируемый интегратор с заданными допусками на ошибку
